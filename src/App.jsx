@@ -5,16 +5,17 @@ async function analyzeWorkoutMenuWithGemini(imageBase64) {
   const apiKey = localStorage.getItem('gemini_api_key');
   if (!apiKey) throw new Error('Gemini API key not configured');
 
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{
-          parts: [
-            {
-              text: `Analyze this workout menu photo and return JSON format:
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{
+            parts: [
+              {
+                text: `Analyze this workout menu photo and return JSON format:
 {
   "exercises": [
     {
@@ -25,23 +26,53 @@ async function analyzeWorkoutMenuWithGemini(imageBase64) {
   "confidence": 0-100
 }
 Return ONLY valid JSON, no markdown.`
-            },
-            {
-              inlineData: {
-                mimeType: "image/jpeg",
-                data: imageBase64
+              },
+              {
+                inlineData: {
+                  mimeType: "image/jpeg",
+                  data: imageBase64
+                }
               }
-            }
-          ]
-        }]
-      })
-    }
-  );
+            ]
+          }]
+        })
+      }
+    );
 
-  const data = await response.json();
-  const content = data.candidates[0].content.parts[0].text;
-  const jsonMatch = content.match(/\{[\s\S]*\}/);
-  return JSON.parse(jsonMatch[0]);
+    const data = await response.json();
+
+    // Check for API errors
+    if (data.error) {
+      throw new Error(`API Error: ${data.error.message || JSON.stringify(data.error)}`);
+    }
+
+    // Check if candidates exist
+    if (!data.candidates || !data.candidates[0] || !data.candidates[0].content || !data.candidates[0].content.parts) {
+      console.error('Unexpected API response:', data);
+      throw new Error('Invalid API response format. Check your API key and image.');
+    }
+
+    const content = data.candidates[0].content.parts[0].text;
+    
+    // Extract JSON from response
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      console.error('No JSON found in response:', content);
+      throw new Error('Could not extract JSON from API response');
+    }
+
+    const result = JSON.parse(jsonMatch[0]);
+    
+    // Validate result structure
+    if (!result.exercises || !Array.isArray(result.exercises)) {
+      throw new Error('Invalid response structure');
+    }
+
+    return result;
+  } catch (error) {
+    console.error('Gemini API Error:', error);
+    throw error;
+  }
 }
 
 // localStorage management
@@ -195,7 +226,8 @@ function WorkoutScreen() {
         const result = await analyzeWorkoutMenuWithGemini(base64);
         setExercises(result.exercises || []);
       } catch (err) {
-        setError('Analysis failed: ' + err.message);
+        console.error('Full error:', err);
+        setError('Analysis failed: ' + (err.message || 'Unknown error. Check API key and image quality.'));
       } finally {
         setAnalyzing(false);
       }
